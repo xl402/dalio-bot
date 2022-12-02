@@ -1,11 +1,12 @@
 import os
 import openai
 from principles_finder_prompt import FINDER_PROMPT
+from passage_ranker import load_passage_ranker
 import difflib
 import json
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
-DEBUG = False
+DEBUG = True
 
 
 def get_principles_to_chapter():
@@ -42,7 +43,27 @@ def _format_principles_finder_input(questions):
         return out
 
 
-def find_principles(questions, corpus):
+def find_principles(questions, ranker):
+    model_input = '\n'.join(questions[-2:])
+    result = ranker.search(model_input)
+    input_result = [i['text'] for i in result]
+    if result[0]['score'] < -9:
+        return None, None
+    principles, chapter = find_relevant_chapter(input_result[:2], corpus)
+    if DEBUG:
+        print('\n' + '#'*5 + 'Principles Finder Result' + '#'*5 + '\n')
+        print('Input: ', model_input)
+        print('Result: ', result)
+        for r in result:
+            print('\n')
+            print(r['text'])
+            print(f"score: {r['score']}")
+        print(result)
+        print('#'*20)
+    return principles, chapter
+
+
+def _old_find_principles(questions, corpus):
     model_input = _format_principles_finder_input(questions)
     if DEBUG:
         print('\n' + '#'*5 + 'Principles Finder Input' + '#'*5 + '\n')
@@ -100,9 +121,11 @@ class DalioBot():
         self.corpus = corpus
         self.initial_text = "Ray Dalio: How can I help you?"
         self.chat_history = []
+        self.ranker = load_passage_ranker()
 
     def respond(self, question):
-        principles, chapter = find_principles(self._format_question(question), self.corpus)
+        formated_question = self._format_question(question)
+        principles, chapter = find_principles(formated_question, self.ranker)
         self.chat_history.append(f'User: {question.strip()}')
         if principles is None:
             self.chat_history.pop(-1)
