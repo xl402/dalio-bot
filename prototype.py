@@ -1,6 +1,7 @@
 import os
 import openai
 from principles_finder_prompt import FINDER_PROMPT
+from will_prompt import PROMPT as BASE_PROMPT
 from passage_ranker import load_passage_ranker
 import difflib
 import json
@@ -43,13 +44,11 @@ def _format_principles_finder_input(questions):
         return out
 
 
-def find_principles(questions, ranker):
-    model_input = '\n'.join(questions[-2:])
+def find_principles(questions, ranker, corpus):
+    # model_input = '; '.join(questions[-2:])
+    model_input = questions[-1]
     result = ranker.search(model_input)
     input_result = [i['text'] for i in result]
-    if result[0]['score'] < -9:
-        return None, None
-    principles, chapter = find_relevant_chapter(input_result[:2], corpus)
     if DEBUG:
         print('\n' + '#'*5 + 'Principles Finder Result' + '#'*5 + '\n')
         print('Input: ', model_input)
@@ -60,6 +59,9 @@ def find_principles(questions, ranker):
             print(f"score: {r['score']}")
         print(result)
         print('#'*20)
+    if result[0]['score'] < -8:
+        return None, None
+    principles, chapter = find_relevant_chapter(input_result[:2], corpus)
     return principles, chapter
 
 
@@ -76,7 +78,7 @@ def _old_find_principles(questions, corpus):
             max_tokens=256,
             top_p=1,
             frequency_penalty=0.5,
-            presence_penalty=0)
+            presence_penalty=0.3)
     response = response['choices'][0]['text']
     if DEBUG:
         print(response)
@@ -96,7 +98,7 @@ def get_completion(chat_history, principles, relevant_corpus):
 {relevant_corpus}
 
 
-Complete the following conversation using the two principles from above, do not start with 'Based on the principles...':
+Complete the following conversation between Ray Dalio and User using the two principles from above, DO NOT use the example if they are not relevant to the questions. Ray Dalio asks insightful questions instead of making assertive statements.
 {chat_history}"""
     if DEBUG:
         print('\n' + '#'*5 + 'Model Input' + '#'*5 + '\n')
@@ -106,40 +108,91 @@ Complete the following conversation using the two principles from above, do not 
             model="text-davinci-003",
             prompt=model_input,
             temperature=0.7,
-            max_tokens=256,
+            max_tokens=100,
+            stop=["\\n", "User"],
             top_p=1,
             frequency_penalty=0,
             presence_penalty=0)
     response = response['choices'][0]['text']
     source = '\n'.join(principles)
+    response = _truncate_incomplete_sentence(response)
     response = response + f"\n\nSource:\n{source}"
     return response
 
 
+def _truncate_incomplete_sentence(response):
+    for i in reversed(range(len(response))):
+        if response[i] in [".", "!", "?", "*"]:
+            break
+    return response if not response or i < 1 else response[:i + 1]
+
+
+def longest_sublist(l):
+    sublist = []
+    counter = 0
+    for i in range(len(l)):
+        if counter + len(l[i]) < 3000:
+            sublist.append(l[i])
+            counter += len(l[i])
+        else:
+            break
+    return "".join(sublist)
+
+
+def get_completion_will_model(model_input):
+    input_text = BASE_PROMPT + '\n' + model_input
+    splits = input_text.split('\nThis is a conversation')
+    new, old = splits[-1], splits[:-1]
+    new = new.replace('User', 'User_five')
+    input_text = '\nThis is a conversation'.join(old + [new])
+    if DEBUG:
+        print('\n' + '#'*5 + 'Model Input' + '#'*5 + '\n')
+        print(input_text)
+        print('#'*20)
+    model_params = {"model": "text-davinci-003",
+                    "temperature": 0.7,
+                    "max_tokens": 256,
+                    "top_p": 1,
+                    "frequency_penalty": 0,
+                    "presence_penalty": 0,
+                    "stop": ["/n", "\\n", "\n"]
+                    }
+    model_params['prompt'] = input_text
+    response = openai.Completion.create(**model_params)['choices'][0]['text']
+    return response.strip()
+
+
 class DalioBot():
-    def __init__(self, corpus):
-        self.corpus = corpus
+    def __init__(self):
+        self.corpus = get_principles_to_chapter()
+        self.corpus = {k: longest_sublist(self.corpus[k]) for k in list(self.corpus.keys())}
         self.initial_text = "Ray Dalio: How can I help you?"
         self.chat_history = []
         self.ranker = load_passage_ranker()
 
     def respond(self, question):
         formated_question = self._format_question(question)
-        principles, chapter = find_principles(formated_question, self.ranker)
+        principles, chapter = find_principles(formated_question, self.ranker, self.corpus)
         self.chat_history.append(f'User: {question.strip()}')
         if principles is None:
-            self.chat_history.pop(-1)
-            response = 'Sorry, I do not know how to answer this question.'
+            model_input = '\n'.join(self.chat_history) + '\nRay Dalio:'
+            response = get_completion_will_model(model_input)
+            # response = '(I am not confident) - ' + response
+            response = response + '\n\nSource: None'
+            # self.chat_history.pop(-1)
+            # response = 'Sorry, I do not know how to answer this question.'
         else:
             model_input = '\n'.join(self.chat_history) + '\nRay Dalio:'
             response = get_completion(model_input, principles, chapter)
-        print(f'\nRay Dalio: {response.strip()}')
+        if DEBUG:
+            print(f'\nRay Dalio: {response.strip()}')
         formated_response = self._format_response(response)
         if principles is not None:
             self.chat_history.append(f'Ray Dalio: {formated_response}')
         return response
 
     def _format_response(self, response):
+        response = response.replace('(I am not confident) - ', '')
         response = response.strip().split('\n\n')[0]
         return response
 
@@ -152,8 +205,7 @@ class DalioBot():
 
 
 if __name__ == '__main__':
-    corpus = get_principles_to_chapter()
-    bot = DalioBot(corpus)
+    bot = DalioBot()
     while True:
         question = input('\nUser: ')
         bot.respond(question)
