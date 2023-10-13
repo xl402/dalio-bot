@@ -7,6 +7,7 @@ import difflib
 import json
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
+RANKER = load_passage_ranker()
 DEBUG = True
 
 
@@ -48,18 +49,17 @@ def find_principles(questions, ranker, corpus):
     # model_input = '; '.join(questions[-2:])
     model_input = questions[-1]
     result = ranker.search(model_input)
-    input_result = [i['text'] for i in result]
+    input_result = [i['text'].split('\n')[0] for i in result]
     if DEBUG:
         print('\n' + '#'*5 + 'Principles Finder Result' + '#'*5 + '\n')
         print('Input: ', model_input)
         print('Result: ', result)
         for r in result:
             print('\n')
-            print(r['text'])
+            print(r['text'].split('\n')[0])
             print(f"score: {r['score']}")
-        print(result)
         print('#'*20)
-    if result[0]['score'] < -8:
+    if result[0]['score'] < -5:
         return None, None
     principles, chapter = find_relevant_chapter(input_result[:2], corpus)
     return principles, chapter
@@ -98,7 +98,7 @@ def get_completion(chat_history, principles, relevant_corpus):
 {relevant_corpus}
 
 
-Complete the following conversation between Ray Dalio and User using the two principles from above, DO NOT use the example if they are not relevant to the questions. Ray Dalio asks insightful questions instead of making assertive statements.
+Complete the following conversation between Ray Dalio and User using the two principles from above, DO NOT use the example if they are not relevant to the questions.
 {chat_history}"""
     if DEBUG:
         print('\n' + '#'*5 + 'Model Input' + '#'*5 + '\n')
@@ -168,7 +168,7 @@ class DalioBot():
         self.corpus = {k: longest_sublist(self.corpus[k]) for k in list(self.corpus.keys())}
         self.initial_text = "Ray Dalio: How can I help you?"
         self.chat_history = []
-        self.ranker = load_passage_ranker()
+        self.ranker = RANKER
 
     def respond(self, question):
         formated_question = self._format_question(question)

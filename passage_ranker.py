@@ -1,5 +1,30 @@
 from sentence_transformers import SentenceTransformer, CrossEncoder, util
-from principles_chunk import get_chunk
+# from principles_chunk import get_chunk
+import json
+
+
+def get_principles_to_chapter():
+    with open('principles_to_chapter.json', 'r') as f:
+        out = json.load(f)
+    return out
+
+
+def longest_sublist(l):
+    sublist = []
+    counter = 0
+    for i in range(len(l)):
+        if counter + len(l[i]) < 2000:
+            sublist.append(l[i])
+            counter += len(l[i])
+        else:
+            break
+    return "".join(sublist)
+
+
+def get_chunk():
+
+    corpus = {k: longest_sublist(corpus[k]) for k in list(corpus.keys())}
+    return list(corpus.values())
 
 
 class PassageRanker():
